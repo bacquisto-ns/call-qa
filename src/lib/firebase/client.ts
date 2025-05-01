@@ -4,32 +4,33 @@ import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
-// Validate environment variables
-const apiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
-const authDomain = process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN;
-const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
-const storageBucket = process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET;
-const messagingSenderId = process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID;
-const appId = process.env.NEXT_PUBLIC_FIREBASE_APP_ID;
+// Your web app's Firebase configuration - Directly provided by user
+const firebaseConfig: FirebaseOptions = {
+  apiKey: "AIzaSyBC7NWwRj7dp0dWkhZqGayq40hTb1Ua_lE",
+  authDomain: "callqa-c93b3.firebaseapp.com",
+  projectId: "callqa-c93b3",
+  storageBucket: "callqa-c93b3.appspot.com", // Corrected the domain for storage bucket
+  messagingSenderId: "831035560702",
+  appId: "1:831035560702:web:50fd8b2d1ac60b2033cbaf"
+};
+
+// Validate environment variables - Keeping this structure but using hardcoded values
+const apiKey = firebaseConfig.apiKey;
+const authDomain = firebaseConfig.authDomain;
+const projectId = firebaseConfig.projectId;
+const storageBucket = firebaseConfig.storageBucket;
+const messagingSenderId = firebaseConfig.messagingSenderId;
+const appId = firebaseConfig.appId;
 
 if (!apiKey) {
-  console.error("Firebase Error: NEXT_PUBLIC_FIREBASE_API_KEY is not defined in environment variables.");
+  console.error("Firebase Error: apiKey is not defined in firebaseConfig.");
   // Optionally throw an error or return early depending on desired behavior
-  // throw new Error("Firebase API Key is missing. Please check your .env file.");
+  // throw new Error("Firebase API Key is missing.");
 }
 if (!projectId) {
-    console.error("Firebase Error: NEXT_PUBLIC_FIREBASE_PROJECT_ID is not defined in environment variables.");
+    console.error("Firebase Error: projectId is not defined in firebaseConfig.");
 }
 
-
-const firebaseConfig: FirebaseOptions = {
-  apiKey: apiKey || "", // Use empty string as fallback to avoid undefined errors, though initialization might still fail
-  authDomain: authDomain,
-  projectId: projectId || "", // Use empty string as fallback
-  storageBucket: storageBucket,
-  messagingSenderId: messagingSenderId,
-  appId: appId,
-};
 
 // Initialize Firebase only if config is partially valid (at least API key and Project ID)
 let app;
