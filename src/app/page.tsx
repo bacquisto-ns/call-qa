@@ -2,83 +2,101 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { doc, getDoc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, updateDoc } from 'firebase/firestore'; // Added updateDoc
 import { db } from '@/lib/firebase/client';
 import AuthWrapper from '@/components/AuthWrapper';
 import FileUpload from '@/components/FileUpload';
 import EvaluationResults from '@/components/EvaluationResults';
 import type { EvaluateCallQualityOutput } from '@/ai/flows/evaluate-call-quality';
 import { evaluateCallQuality } from '@/ai/flows/evaluate-call-quality';
-import { transcribeAudioFlow } from '@/ai/flows/transcribe-audio'; // Assuming this exists
+import { transcribeAudioFlow } from '@/ai/flows/transcribe-audio';
 import { Toaster } from "@/components/ui/toaster";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton'; // For initial loading
 
 interface CallData {
   id: string;
   fileName: string;
   storageUrl: string;
-  status: 'uploaded' | 'transcribing' | 'evaluating' | 'completed' | 'failed';
+  status: 'uploaded' | 'fetching' | 'transcribing' | 'evaluating' | 'updating' | 'completed' | 'failed';
   transcription?: string;
   evaluation?: EvaluateCallQualityOutput;
   createdAt: any; // Firestore timestamp type can be complex
   error?: string;
+  userId?: string; // Keep track of who uploaded
 }
 
 export default function Home() {
   const [currentCall, setCurrentCall] = useState<CallData | null>(null);
-  const [isLoadingEvaluation, setIsLoadingEvaluation] = useState(false);
+  const [isLoading, setIsLoading] = useState(false); // Consolidated loading state
   const { toast } = useToast();
 
+  // Function to update Firestore status
+  const updateCallStatus = async (callId: string, status: CallData['status'], data: Partial<Omit<CallData, 'id'>> = {}) => {
+      console.log(`Updating call ${callId} status to: ${status}`, data);
+      setCurrentCall(prev => prev && prev.id === callId ? { ...prev, status, ...data } : prev); // Optimistic UI update
+      try {
+          const callDocRef = doc(db, 'calls', callId);
+          await updateDoc(callDocRef, { status, ...data });
+          console.log(`Firestore updated for call ${callId} with status ${status}`);
+      } catch (error) {
+          console.error(`Failed to update Firestore status for call ${callId} to ${status}:`, error);
+          // Optionally revert optimistic update or show specific error
+           toast({
+               title: "Database Update Failed",
+               description: `Could not update status to ${status}.`,
+               variant: "destructive",
+           });
+      }
+  };
+
+
   const processCall = useCallback(async (callId: string) => {
-    setIsLoadingEvaluation(true);
-    setCurrentCall(prev => prev ? { ...prev, status: 'processing' } : null); // Optimistic UI update
+    console.log(`[processCall] Starting processing for call ID: ${callId}`);
+    setIsLoading(true);
+    await updateCallStatus(callId, 'fetching'); // Indicate fetching data
 
     try {
-      console.log(`Processing call ID: ${callId}`);
       const callDocRef = doc(db, 'calls', callId);
       const callSnap = await getDoc(callDocRef);
 
       if (!callSnap.exists()) {
-        throw new Error("Call document not found.");
+        console.error(`[processCall] Error: Call document ${callId} not found.`);
+        throw new Error("Call document not found after upload.");
       }
 
-      const callData = callSnap.data() as Omit<CallData, 'id'>;
-      const storageUrl = callData.storageUrl;
+      const callData = { id: callSnap.id, ...callSnap.data() } as CallData;
+      console.log(`[processCall] Fetched call data for ${callId}:`, callData);
+      setCurrentCall(callData); // Update state with fetched data
 
+      const storageUrl = callData.storageUrl;
       if (!storageUrl) {
+         console.error(`[processCall] Error: Storage URL not found in call data for ${callId}.`);
          throw new Error("Storage URL not found in call data.");
       }
 
       // 1. Transcription
-      console.log(`Starting transcription for: ${storageUrl}`);
-      setCurrentCall(prev => prev ? { ...prev, status: 'transcribing' } : null);
+      console.log(`[processCall] Starting transcription for ${callId} (URL: ${storageUrl})`);
+      await updateCallStatus(callId, 'transcribing');
       const transcriptionResult = await transcribeAudioFlow({ storageUrl });
       const transcription = transcriptionResult.transcription;
-      console.log("Transcription completed.");
-      setCurrentCall(prev => prev ? { ...prev, transcription, status: 'evaluating' } : prev);
+      console.log(`[processCall] Transcription completed for ${callId}. Result:`, transcription);
+      // Update status and transcription in Firestore and state
+      await updateCallStatus(callId, 'evaluating', { transcription });
 
 
       // 2. Evaluation
-      console.log(`Starting evaluation for: ${storageUrl}`);
+      console.log(`[processCall] Starting evaluation for ${callId}`);
        const evaluationResult = await evaluateCallQuality({ audioStorageUrl: storageUrl });
-      console.log("Evaluation completed.");
+      console.log(`[processCall] Evaluation completed for ${callId}. Result:`, evaluationResult);
+      // Update status and evaluation in Firestore and state
+      await updateCallStatus(callId, 'updating', { evaluation: evaluationResult }); // Indicate final update
 
 
-      // Update Firestore - This part would ideally be in a backend function triggered by the upload
-      // For simplicity in this scaffold, we do it client-side after processing.
-      // In a real app, the backend would update Firestore and the client would listen for changes.
-      setCurrentCall(prev => prev ? {
-         ...prev,
-         id: callId,
-         fileName: callData.fileName,
-         storageUrl: callData.storageUrl,
-         createdAt: callData.createdAt,
-         transcription: transcription,
-         evaluation: evaluationResult,
-         status: 'completed'
-      } : null);
-
+      // 3. Final Update
+       await updateCallStatus(callId, 'completed'); // Mark as fully completed
+      console.log(`[processCall] Processing successfully completed for ${callId}.`);
 
       toast({
         title: "Processing Complete",
@@ -86,58 +104,82 @@ export default function Home() {
       });
 
     } catch (error: any) {
-       console.error('Error processing call:', error);
-       setCurrentCall(prev => prev ? { ...prev, status: 'failed', error: error.message } : null);
+       console.error(`[processCall] Error processing call ${callId}:`, error);
+       const errorMessage = error.message || 'An unknown error occurred during processing.';
+       await updateCallStatus(callId, 'failed', { error: errorMessage }); // Update status and error
        toast({
          title: "Processing Failed",
-         description: `An error occurred: ${error.message}`,
+         description: errorMessage,
          variant: "destructive",
        });
     } finally {
-      setIsLoadingEvaluation(false);
+      console.log(`[processCall] Finished processing attempt for ${callId}`);
+      setIsLoading(false);
     }
-  }, [toast]);
-
-  // // Optional: Firestore listener for real-time updates (if backend updates Firestore)
-  // useEffect(() => {
-  //   if (!currentCallId) return;
-  //
-  //   const unsub = onSnapshot(doc(db, "calls", currentCallId), (doc) => {
-  //     if (doc.exists()) {
-  //       const data = doc.data() as Omit<CallData, 'id'>;
-  //       setCurrentCall({ id: doc.id, ...data });
-  //       setIsLoadingEvaluation(data.status === 'processing' || data.status === 'transcribing' || data.status === 'evaluating');
-  //       if (data.status === 'failed') {
-  //          toast({ title: "Processing Failed", description: data.error || "An unknown error occurred.", variant: "destructive" });
-  //       }
-  //     } else {
-  //       console.log("Call document deleted or does not exist.");
-  //       setCurrentCall(null);
-  //     }
-  //   });
-  //
-  //   return () => unsub();
-  // }, [currentCallId, toast]);
+  }, [toast]); // Removed updateCallStatus from dependencies as it's stable
 
 
-  const handleUploadSuccess = (callId: string) => {
-     console.log("Upload successful, call ID:", callId);
-     // Fetch initial data to display something while processing
+  const handleUploadSuccess = useCallback((callId: string) => {
+     console.log("[handleUploadSuccess] Upload successful, received call ID:", callId);
+     setIsLoading(true); // Start loading indicator immediately
+     setCurrentCall(null); // Clear previous call data
      const callDocRef = doc(db, 'calls', callId);
+
+     // Fetch initial data to display basic info while processing starts
      getDoc(callDocRef).then(docSnap => {
         if (docSnap.exists()) {
-          setCurrentCall({ id: docSnap.id, ...(docSnap.data() as Omit<CallData, 'id'>) });
-          // Start processing immediately after upload success
-          processCall(callId);
+           const initialData = { id: docSnap.id, ...(docSnap.data() as Omit<CallData, 'id'>) };
+           console.log("[handleUploadSuccess] Fetched initial data:", initialData);
+           setCurrentCall({ ...initialData, status: 'uploaded' }); // Set initial state
+           // Start the actual processing
+           processCall(callId);
         } else {
-          console.error("Uploaded document not found immediately after creation.");
+           console.error("[handleUploadSuccess] Error: Uploaded document not found immediately after creation for ID:", callId);
            toast({ title: "Error", description: "Could not find the uploaded call record.", variant: "destructive"});
+           setIsLoading(false); // Stop loading on error
         }
      }).catch(error => {
-       console.error("Error fetching initial call data:", error);
+       console.error("[handleUploadSuccess] Error fetching initial call data:", error);
        toast({ title: "Error", description: "Failed to load initial call data.", variant: "destructive"});
+       setIsLoading(false); // Stop loading on error
      });
-   };
+   }, [processCall, toast]); // processCall depends on toast
+
+
+   // Optional: Real-time listener to observe changes made by backend/processCall
+   useEffect(() => {
+     if (!currentCall?.id) return;
+
+     console.log(`[useEffect Listener] Setting up listener for call ID: ${currentCall.id}`);
+     const unsub = onSnapshot(doc(db, "calls", currentCall.id), (docSnap) => {
+       if (docSnap.exists()) {
+         const data = { id: docSnap.id, ...docSnap.data() } as CallData;
+         console.log(`[useEffect Listener] Received update for ${data.id}: Status = ${data.status}`, data);
+         setCurrentCall(data); // Update state with the latest data from Firestore
+         // Update loading state based on Firestore status
+         setIsLoading(['fetching', 'transcribing', 'evaluating', 'updating'].includes(data.status));
+
+         // No need to show toast here for failed, processCall handles it.
+         // if (data.status === 'failed' && data.error !== currentCall?.error) { // Avoid duplicate toasts
+         //    toast({ title: "Processing Failed", description: data.error || "An unknown error occurred.", variant: "destructive" });
+         // }
+
+       } else {
+         console.log(`[useEffect Listener] Call document ${currentCall.id} deleted or does not exist.`);
+         // Optionally clear the state if the document is gone
+         // setCurrentCall(null);
+       }
+     }, (error) => {
+         console.error(`[useEffect Listener] Error listening to call ${currentCall.id}:`, error);
+         toast({ title: "Real-time Update Error", description: "Could not listen for call updates.", variant: "destructive"});
+     });
+
+     // Cleanup listener on component unmount or when currentCall.id changes
+     return () => {
+        console.log(`[useEffect Listener] Cleaning up listener for call ID: ${currentCall?.id}`);
+        unsub();
+     };
+   }, [currentCall?.id, toast]); // Re-run if call ID changes
 
 
   return (
@@ -156,28 +198,43 @@ export default function Home() {
                     <CardDescription>Select an MP3 file to analyze.</CardDescription>
                  </CardHeader>
                  <CardContent>
-                    <FileUpload onUploadSuccess={handleUploadSuccess} />
+                    <FileUpload onUploadSuccess={handleUploadSuccess} disabled={isLoading} />
                  </CardContent>
               </Card>
+               {/* Display current status */}
+              {currentCall && (
+                  <Card className="mt-4">
+                      <CardHeader className="pb-2">
+                          <CardTitle className="text-lg">Current Status</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                          <p className="text-sm capitalize text-muted-foreground">
+                              File: <span className="font-medium text-foreground">{currentCall.fileName || 'N/A'}</span>
+                          </p>
+                          <p className="text-sm capitalize text-muted-foreground">
+                              Status: <span className="font-medium text-foreground">{currentCall.status}</span>
+                               {isLoading && <span className="animate-pulse">...</span>}
+                          </p>
+                          {currentCall.status === 'failed' && (
+                              <p className="text-sm text-destructive mt-1">
+                                  Error: {currentCall.error}
+                              </p>
+                          )}
+                      </CardContent>
+                  </Card>
+              )}
            </div>
+
 
            <div className="md:col-span-2">
              <EvaluationResults
                transcription={currentCall?.transcription ?? null}
                evaluation={currentCall?.evaluation ?? null}
                audioUrl={currentCall?.storageUrl ?? null}
-               isLoading={isLoadingEvaluation || currentCall?.status === 'processing' || currentCall?.status === 'transcribing' || currentCall?.status === 'evaluating'}
+               isLoading={isLoading} // Use the consolidated loading state
+               status={currentCall?.status ?? null} // Pass status for more specific feedback
              />
-             {currentCall?.status === 'failed' && (
-                <Card className="mt-4 border-destructive bg-destructive/10">
-                   <CardHeader>
-                      <CardTitle className="text-destructive">Processing Failed</CardTitle>
-                   </CardHeader>
-                   <CardContent>
-                      <p className="text-destructive-foreground text-sm">{currentCall.error || 'An unknown error occurred during processing.'}</p>
-                   </CardContent>
-                </Card>
-              )}
+             {/* Moved failure display to the status card on the left */}
            </div>
          </div>
          <Toaster />
