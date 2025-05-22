@@ -3,7 +3,8 @@
 import * as React from "react"
 import { Slot } from "@radix-ui/react-slot"
 import { VariantProps, cva } from "class-variance-authority"
-import { PanelLeft } from "lucide-react"
+import { PanelLeft, LayoutDashboard } from "lucide-react" // Added LayoutDashboard
+import Link from "next/link" // Added Link
 
 import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
@@ -353,7 +354,7 @@ SidebarInput.displayName = "SidebarInput"
 const SidebarHeader = React.forwardRef<
   HTMLDivElement,
   React.ComponentProps<"div">
->(({ className, ...props }, ref) => {
+>(({ className, children, ...props }, ref) => { // Extracted children from props
   return (
     <div
       ref={ref}
@@ -407,8 +408,21 @@ const SidebarContent = React.forwardRef<
         "flex min-h-0 flex-1 flex-col gap-2 overflow-auto group-data-[collapsible=icon]:overflow-hidden",
         className
       )}
-      {...props}
-    />
+      // {...props} // children is now explicit
+    >
+      {/* Added Dashboard Link as a default item */}
+      <SidebarMenu>
+        <SidebarMenuItem>
+          <Link href="/dashboard" passHref legacyBehavior>
+            <SidebarMenuButton asChild tooltip="Dashboard">
+              <LayoutDashboard />
+              <span>Dashboard</span>
+            </SidebarMenuButton>
+          </Link>
+        </SidebarMenuItem>
+      </SidebarMenu>
+      {children} {/* Render other children passed to SidebarContent */}
+    </div>
   )
 })
 SidebarContent.displayName = "SidebarContent"
