@@ -22,8 +22,11 @@ import {
   isWithinInterval, // Though not used in the bucket approach, good to have if needed elsewhere
 } from 'date-fns';
 import { DateRangePicker } from '@/components/DateRangePicker';
-import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card'; // Added for Summary
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"; // Added for Trend Interval
+import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
+import { BarChart, LineChart, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Bar, Line, ResponsiveContainer } from 'recharts';
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'; // Added
 
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
@@ -164,6 +167,19 @@ export default function DashboardPage() {
     }
   }, [allCalls, agents, dateRange, trendInterval]); // Dependencies
 
+  const formatXAxisTick = (value: string) => {
+    // value could be "YYYY-MM-DD", "YYYY-MM-DD (Week)", or "YYYY-MM"
+    if (trendInterval === 'monthly') {
+      return format(new Date(value), 'MMM yy'); // e.g., Jan 24
+    }
+    if (trendInterval === 'weekly') {
+      const datePart = value.split(' ')[0]; // "YYYY-MM-DD"
+      return format(new Date(datePart), 'MMM dd'); // e.g., Jan 15
+    }
+    // Daily
+    return format(new Date(value), 'MMM dd'); // e.g., Jan 15
+  };
+
   return (
     <AuthWrapper>
       <div className="container mx-auto p-4 md:p-8 space-y-8">
@@ -257,16 +273,117 @@ export default function DashboardPage() {
               )}
             </section>
 
-            {/* Placeholder for Trend Charts section */}
+            {/* Trend Charts section */}
             <section id="trend-charts" className="mb-6">
-              {/* Content for trend charts will be added in a later step */}
-              <p className="text-center text-muted-foreground">(Trend Charts will be here)</p>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Call Volume Chart */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Call Volume Trend</CardTitle>
+                    <CardDescription>Number of calls ({trendInterval})</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {trendData && trendData.length > 0 ? (
+                      <ChartContainer className="h-[300px] w-full">
+                        <BarChart data={trendData}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis 
+                            dataKey="date" 
+                            tickFormatter={formatXAxisTick} 
+                            angle={-30} 
+                            textAnchor="end" 
+                            interval={trendData.length > 10 ? Math.floor(trendData.length / 10) : 0} 
+                            height={50}
+                          />
+                          <YAxis allowDecimals={false} />
+                          <ChartTooltip content={<ChartTooltipContent />} />
+                          <Legend />
+                          <Bar dataKey="callVolume" fill="#8884d8" name="Calls" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ChartContainer>
+                    ) : (
+                      <div className="h-[300px] flex items-center justify-center">
+                        <p className="text-center text-muted-foreground">
+                          No call volume data available for this period.
+                        </p>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Average Score Chart */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Average Score Trend</CardTitle>
+                    <CardDescription>Average overall rating (1-5) ({trendInterval})</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {trendData && trendData.length > 0 ? (
+                      <ChartContainer className="h-[300px] w-full">
+                        <LineChart data={trendData}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                           <XAxis 
+                            dataKey="date" 
+                            tickFormatter={formatXAxisTick} 
+                            angle={-30} 
+                            textAnchor="end" 
+                            interval={trendData.length > 10 ? Math.floor(trendData.length / 10) : 0} 
+                            height={50}
+                          />
+                          <YAxis type="number" domain={[1, 5]} tickFormatter={(value) => value.toFixed(1)} />
+                          <ChartTooltip content={<ChartTooltipContent />} />
+                          <Legend />
+                          <Line type="monotone" dataKey="averageScore" stroke="#82ca9d" name="Avg. Score" strokeWidth={2} dot={{ r: 3 }} />
+                        </LineChart>
+                      </ChartContainer>
+                    ) : (
+                       <div className="h-[300px] flex items-center justify-center">
+                        <p className="text-center text-muted-foreground">
+                          No average score data available for this period.
+                        </p>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
             </section>
 
-            {/* Placeholder for Agent Performance section */}
-            <section id="agent-performance">
-              {/* Content for agent performance will be added in a later step */}
-              <p className="text-center text-muted-foreground">(Agent Performance Table will be here)</p>
+            {/* Agent Performance section */}
+            <section id="agent-performance" className="mb-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Agent Performance</CardTitle>
+                  <CardDescription>
+                    Breakdown of call metrics by agent for the selected period.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {agentPerformanceData && agentPerformanceData.length > 0 ? (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Agent Name</TableHead>
+                          <TableHead className="text-right">Total Calls</TableHead>
+                          <TableHead className="text-right">Average Score (1-5)</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {agentPerformanceData.map((agent) => (
+                          <TableRow key={agent.agentId}>
+                            <TableCell className="font-medium">{agent.agentName}</TableCell>
+                            <TableCell className="text-right">{agent.totalCalls}</TableCell>
+                            <TableCell className="text-right">{agent.averageScore.toFixed(2)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  ) : (
+                    <p className="text-center text-muted-foreground py-8">
+                      No agent performance data available for this period.
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
             </section>
           </>
         )}
