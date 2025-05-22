@@ -4,6 +4,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { doc, getDoc, onSnapshot, updateDoc } from 'firebase/firestore'; // Added updateDoc
 import { db } from '@/lib/firebase/client';
+import { listAgents } from '@/lib/firebase/agents'; // Added
+import type { Agent } from '@/lib/types'; // Added
 import AuthWrapper from '@/components/AuthWrapper';
 import FileUpload from '@/components/FileUpload';
 import EvaluationResults from '@/components/EvaluationResults';
@@ -25,12 +27,33 @@ interface CallData {
   createdAt: any; // Firestore timestamp type can be complex
   error?: string;
   userId?: string; // Keep track of who uploaded
+  agentId?: string;
 }
 
 export default function Home() {
   const [currentCall, setCurrentCall] = useState<CallData | null>(null);
   const [isLoading, setIsLoading] = useState(false); // Consolidated loading state
+  const [agents, setAgents] = useState<Agent[]>([]); // Added agents state
   const { toast } = useToast();
+
+  // Fetch agents on component mount
+  useEffect(() => {
+    const fetchAgentsList = async () => {
+      try {
+        const fetchedAgents = await listAgents();
+        setAgents(fetchedAgents);
+        console.log("Fetched agents:", fetchedAgents);
+      } catch (error) {
+        console.error("Failed to fetch agents:", error);
+        toast({
+          title: "Error Fetching Agents",
+          description: "Could not load the list of agents. Please try refreshing.",
+          variant: "destructive",
+        });
+      }
+    };
+    fetchAgentsList();
+  }, [toast]); // toast is a stable dependency from useToast
 
   // Function to update Firestore status
   const updateCallStatus = async (callId: string, status: CallData['status'], data: Partial<Omit<CallData, 'id'>> = {}) => {
@@ -119,31 +142,48 @@ export default function Home() {
   }, [toast]); // Removed updateCallStatus from dependencies as it's stable
 
 
-  const handleUploadSuccess = useCallback((callId: string) => {
-     console.log("[handleUploadSuccess] Upload successful, received call ID:", callId);
-     setIsLoading(true); // Start loading indicator immediately
-     setCurrentCall(null); // Clear previous call data
-     const callDocRef = doc(db, 'calls', callId);
+  const handleUploadSuccess = useCallback(async (callId: string, agentId?: string) => {
+    console.log(`[handleUploadSuccess] Upload successful, received call ID: ${callId}, Agent ID: ${agentId}`);
+    setIsLoading(true);
+    setCurrentCall(null);
+    const callDocRef = doc(db, 'calls', callId);
 
-     // Fetch initial data to display basic info while processing starts
-     getDoc(callDocRef).then(docSnap => {
-        if (docSnap.exists()) {
-           const initialData = { id: docSnap.id, ...(docSnap.data() as Omit<CallData, 'id'>) };
-           console.log("[handleUploadSuccess] Fetched initial data:", initialData);
-           setCurrentCall({ ...initialData, status: 'uploaded' }); // Set initial state
-           // Start the actual processing
-           processCall(callId);
-        } else {
-           console.error("[handleUploadSuccess] Error: Uploaded document not found immediately after creation for ID:", callId);
-           toast({ title: "Error", description: "Could not find the uploaded call record.", variant: "destructive"});
-           setIsLoading(false); // Stop loading on error
+    try {
+      // If agentId is provided, update the document first.
+      // This assumes the document is already created by FileUpload component or a similar mechanism.
+      if (agentId) {
+        console.log(`[handleUploadSuccess] Updating call ${callId} with agentId: ${agentId}`);
+        await updateDoc(callDocRef, { agentId: agentId });
+        console.log(`[handleUploadSuccess] Firestore updated for call ${callId} with agentId.`);
+      }
+
+      const docSnap = await getDoc(callDocRef);
+      if (docSnap.exists()) {
+        const initialData = { id: docSnap.id, ...(docSnap.data() as Omit<CallData, 'id'>) };
+        // Ensure agentId from the update is reflected if it was just set
+        if (agentId && !initialData.agentId) {
+            initialData.agentId = agentId;
         }
-     }).catch(error => {
-       console.error("[handleUploadSuccess] Error fetching initial call data:", error);
-       toast({ title: "Error", description: "Failed to load initial call data.", variant: "destructive"});
-       setIsLoading(false); // Stop loading on error
-     });
-   }, [processCall, toast]); // processCall depends on toast
+        console.log("[handleUploadSuccess] Fetched initial data:", initialData);
+        setCurrentCall({ ...initialData, status: 'uploaded' });
+        processCall(callId); // Start the main processing flow
+      } else {
+        console.error("[handleUploadSuccess] Error: Uploaded document not found for ID:", callId);
+        toast({ title: "Error", description: "Could not find the uploaded call record.", variant: "destructive" });
+        setIsLoading(false);
+      }
+    } catch (error) {
+      console.error("[handleUploadSuccess] Error during post-upload processing:", error);
+      toast({ title: "Upload Error", description: `Failed to process upload for ${callId}. ${error instanceof Error ? error.message : ''}`, variant: "destructive" });
+      setIsLoading(false);
+      // Attempt to update status to failed if possible
+      try {
+        await updateCallStatus(callId, 'failed', { error: `Post-upload processing error: ${error instanceof Error ? error.message : String(error)}` });
+      } catch (statusUpdateError) {
+        console.error("[handleUploadSuccess] Error updating call status to failed after post-upload error:", statusUpdateError);
+      }
+    }
+  }, [processCall, toast]); // processCall and toast are dependencies
 
 
    // Optional: Real-time listener to observe changes made by backend/processCall
@@ -195,10 +235,10 @@ export default function Home() {
               <Card className="shadow-md">
                  <CardHeader>
                     <CardTitle>Upload Recording</CardTitle>
-                    <CardDescription>Select an MP3 file to analyze.</CardDescription>
+                    <CardDescription>Select an MP3 file and optionally assign an agent.</CardDescription>
                  </CardHeader>
                  <CardContent>
-                    <FileUpload onUploadSuccess={handleUploadSuccess} disabled={isLoading} />
+                    <FileUpload onUploadSuccess={handleUploadSuccess} disabled={isLoading} agents={agents} />
                  </CardContent>
               </Card>
                {/* Display current status */}

@@ -2,9 +2,13 @@
 'use client';
 
 import type { ChangeEvent } from 'react';
+import type { ChangeEvent } from 'react'; // Keep this if it's used, or remove
 import { useState } from 'react';
 import { ref, uploadBytesResumable, getDownloadURL, type UploadTaskSnapshot } from 'firebase/storage';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import type { Agent } from '@/lib/types'; // Added
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'; // Added
+import { Label } from '@/components/ui/label'; // Added
 import { auth, storage, db } from '@/lib/firebase/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,12 +17,14 @@ import { useToast } from "@/hooks/use-toast";
 import { Upload, Loader2 } from 'lucide-react'; // Added Loader2
 
 interface FileUploadProps {
-  onUploadSuccess: (callId: string) => void;
-  disabled?: boolean; // Add disabled prop
+  onUploadSuccess: (callId: string, agentId?: string) => void; // Modified signature
+  disabled?: boolean;
+  agents: Agent[]; // New prop
 }
 
-export default function FileUpload({ onUploadSuccess, disabled = false }: FileUploadProps) {
+export default function FileUpload({ onUploadSuccess, disabled = false, agents }: FileUploadProps) {
   const [file, setFile] = useState<File | null>(null);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | undefined>(undefined); // Added agent state
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const MAX_RETRIES = 3;
@@ -115,7 +121,7 @@ export default function FileUpload({ onUploadSuccess, disabled = false }: FileUp
               description: `${file.name} has been uploaded. Starting analysis...`,
             });
             setFile(null); // Clear file input
-            onUploadSuccess(docRef.id); // Pass the new document ID back
+            onUploadSuccess(docRef.id, selectedAgentId === "none" || !selectedAgentId ? undefined : selectedAgentId); // Pass agentId
           } catch (error) {
             console.error('[FileUpload] Error getting download URL or saving metadata:', error);
             toast({
@@ -136,8 +142,38 @@ export default function FileUpload({ onUploadSuccess, disabled = false }: FileUp
   };
 
   return (
-    <div className={`flex flex-col items-center space-y-4 p-4 border rounded-lg shadow-sm bg-card ${disabled ? 'opacity-70 cursor-not-allowed' : ''}`}>
-      <label htmlFor="file-upload" className={`cursor-pointer flex flex-col items-center text-center p-6 border-2 border-dashed border-input rounded-lg ${!disabled ? 'hover:border-accent' : ''} transition-colors w-full ${disabled ? 'pointer-events-none' : ''}`}>
+    <div className={`flex flex-col space-y-4 p-4 border rounded-lg shadow-sm bg-card ${disabled ? 'opacity-70 cursor-not-allowed' : ''}`}>
+      {/* Agent Selection Dropdown */}
+      <div className="w-full">
+        <Label htmlFor="agent-select" className="mb-1 block text-sm font-medium text-muted-foreground">
+          Assign to Agent (Optional)
+        </Label>
+        <Select
+          value={selectedAgentId}
+          onValueChange={(value) => setSelectedAgentId(value === "none" ? undefined : value)}
+          disabled={disabled || uploading || agents.length === 0}
+        >
+          <SelectTrigger id="agent-select" className="w-full">
+            <SelectValue placeholder="Select Agent" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none">None</SelectItem>
+            {agents.map((agent) => (
+              <SelectItem key={agent.id} value={agent.id}>
+                {agent.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {agents.length === 0 && !uploading && (
+          <p className="text-xs text-muted-foreground mt-1">
+            No agents available. You can add agents in the admin panel.
+          </p>
+        )}
+      </div>
+
+      {/* File Input Area */}
+      <label htmlFor="file-upload" className={`cursor-pointer flex flex-col items-center text-center p-6 border-2 border-dashed border-input rounded-lg ${!disabled && !uploading ? 'hover:border-accent' : ''} transition-colors w-full ${disabled || uploading ? 'pointer-events-none opacity-50' : ''}`}>
         <Upload className="h-10 w-10 text-muted-foreground mb-2" />
         <span className="text-sm font-medium text-foreground">
           {file ? file.name : 'Click or drag MP3 file to upload'}
